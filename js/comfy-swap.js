@@ -3,7 +3,7 @@ import { app } from "../../scripts/app.js";
 console.log("[ComfySwap] Plugin loading...");
 
 // ============================================================
-// 工具函数
+// Utility Functions
 // ============================================================
 
 function slugify(value) {
@@ -71,7 +71,7 @@ function createEl(tag, attrs = {}, text = "") {
 }
 
 // ============================================================
-// 样式
+// Styles
 // ============================================================
 
 const modalStyle = `
@@ -328,7 +328,7 @@ const modalStyle = `
 `;
 
 // ============================================================
-// 主函数
+// Main Functions
 // ============================================================
 
 async function openComfySwapExport() {
@@ -663,7 +663,7 @@ function openMappingPanel(promptObj, initialMapping) {
 }
 
 // ============================================================
-// 注册扩展
+// Register Extension
 // ============================================================
 
 app.registerExtension({
