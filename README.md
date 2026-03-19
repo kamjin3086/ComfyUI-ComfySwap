@@ -1,55 +1,52 @@
 # ComfyUI-ComfySwap
 
-A ComfyUI extension that enables seamless workflow export to [Comfy-Swap](https://github.com/kamjin3086/comfy-swap), allowing you to create REST API endpoints from your ComfyUI workflows.
+A ComfyUI extension that enables seamless workflow swap to [Comfy-Swap](https://github.com/your-repo/comfy-swap), making your workflows callable via REST API and CLI.
 
 ## Features
 
 - **One-Click Export**: Export workflows directly from ComfyUI's interface
 - **Parameter Mapping**: Automatically detect and configure API parameters
-- **Multiple Export Options**: Save to queue, direct send, copy JSON, or download file
+- **Multiple Options**: Save to queue, direct send, copy JSON, or download file
 - **Seamless Sync**: Pending workflows are automatically synced to Comfy-Swap
 
 ## Installation
 
-### Method 1: ComfyUI Manager (Recommended)
-
-Search for "ComfySwap" in ComfyUI Manager and click Install.
-
-### Method 2: Git Clone
+### Method 1: Git Clone (Recommended)
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/kamjin3086/ComfyUI-ComfySwap.git
+git clone https://github.com/your-repo/ComfyUI-ComfySwap.git
 ```
 
-### Method 3: Manual Download
+### Method 2: Download ZIP
 
-1. Download the latest release ZIP
+1. Download from Comfy-Swap UI: **Settings** → **Plugin Installation** → **Download**
 2. Extract to `ComfyUI/custom_nodes/ComfyUI-ComfySwap`
 3. Restart ComfyUI
 
 ## Usage
 
-### Exporting a Workflow
+### Export a Workflow
 
 1. Create or open a workflow in ComfyUI
 2. Access the export dialog via:
+   - **Right-click**: Click on canvas → **Export to ComfySwap**
    - **Menu**: `Workflow` → `Export to ComfySwap`
-   - **Right-click**: Click on canvas → `Export to ComfySwap`
 3. Configure your workflow:
+   - Choose **Create New** or **Update Existing**
    - Enter a workflow name
    - Select which parameters to expose as API inputs
    - Optionally merge related parameters
-4. Click **Save** to add to the sync queue
+4. Click **Swap** to make it available via API/CLI
 
-### Export Options
+### Options
 
 | Option | Description |
 |--------|-------------|
-| **Save** | Add to pending queue (synced by Comfy-Swap) |
-| **Direct Send** | Send directly to a Comfy-Swap server |
-| **Copy JSON** | Copy workflow JSON to clipboard |
-| **Download** | Download as a JSON file |
+| **Swap** | Register workflow with Comfy-Swap (via pending queue) |
+| **Direct Send** | Send directly to a specified Comfy-Swap server |
+| **Export JSON** | Copy to clipboard for manual import |
+| **Export File** | Download .json file for backup or transfer |
 
 ## API Endpoints
 
@@ -61,10 +58,6 @@ This plugin exposes the following endpoints on your ComfyUI server:
 | `/comfyswap/pending` | GET | List pending workflows |
 | `/comfyswap/pending` | POST | Add workflow to queue |
 | `/comfyswap/pending/{id}` | DELETE | Remove workflow from queue |
-
-## Configuration
-
-No configuration required. The plugin works out of the box with Comfy-Swap.
 
 ## Requirements
 
@@ -87,13 +80,9 @@ No configuration required. The plugin works out of the box with Comfy-Swap.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues and pull requests.
+MIT License
 
 ## Links
 
-- [Comfy-Swap](https://github.com/kamjin3086/comfy-swap) - Main application
+- [Comfy-Swap](https://github.com/your-repo/comfy-swap) - Main application
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) - The AI image generation platform

@@ -615,12 +615,12 @@ async function openComfySwapExport() {
   try {
     exported = await app.graphToPrompt();
   } catch (e) {
-    alert(`Export failed: ${e.message}`);
+    alert(`Swap failed: ${e.message}`);
     return;
   }
   const promptObj = exported?.output || exported;
   if (!promptObj || Object.keys(promptObj).length === 0) {
-    alert("No workflow to export. Please create a workflow first.");
+    alert("No workflow to swap. Please create a workflow first.");
     return;
   }
   const candidates = detectCandidateParams(promptObj);
@@ -767,7 +767,7 @@ async function openMappingPanel(promptObj, initialMapping) {
         </svg>
         Export to Comfy-Swap
       </h3>
-      <p class="cs-header-desc">Export current workflow as callable API for integration into apps or automation</p>
+      <p class="cs-header-desc">Make this workflow callable via API and CLI</p>
     </div>
     <div class="cs-body">
       <div class="cs-stats">
@@ -892,20 +892,21 @@ async function openMappingPanel(promptObj, initialMapping) {
         Cancel
       </button>
       <div class="cs-footer-right">
-        <button class="cs-btn cs-btn-link" id="cs-more" title="More export options">More ▾</button>
+        <button class="cs-btn cs-btn-link" id="cs-more" title="More options">More ▾</button>
         <button class="cs-btn cs-btn-primary" id="cs-save">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-            <polyline points="17 21 17 13 7 13 7 21"/>
-            <polyline points="7 3 7 8 15 8"/>
+            <polyline points="17 1 21 5 17 9"/>
+            <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+            <polyline points="7 23 3 19 7 15"/>
+            <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
           </svg>
-          Save
+          Swap
         </button>
       </div>
     </div>
     <div class="cs-more-panel" id="cs-more-panel">
       <div class="cs-more-header">
-        <span>Other Export Methods</span>
+        <span>Export Options</span>
         <button class="cs-more-close" id="cs-more-close">×</button>
       </div>
       <div class="cs-more-body">
@@ -932,9 +933,9 @@ async function openMappingPanel(promptObj, initialMapping) {
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
               </svg>
-              Copy JSON
+              Export JSON
             </strong>
-            <span>Copy and paste into Comfy-Swap web import</span>
+            <span>Copy to clipboard for manual import</span>
           </div>
           <button class="cs-btn cs-btn-outline cs-btn-sm" id="cs-copy">Copy</button>
         </div>
@@ -946,11 +947,11 @@ async function openMappingPanel(promptObj, initialMapping) {
                 <polyline points="7 10 12 15 17 10"/>
                 <line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
-              Download File
+              Export File
             </strong>
-            <span>Download .json file for manual upload</span>
+            <span>Download .json file for backup or transfer</span>
           </div>
-          <button class="cs-btn cs-btn-outline cs-btn-sm" id="cs-download">Download</button>
+          <button class="cs-btn cs-btn-outline cs-btn-sm" id="cs-download">Export</button>
         </div>
       </div>
     </div>
@@ -1134,21 +1135,33 @@ async function openMappingPanel(promptObj, initialMapping) {
     return buildPayload(state, promptObj);
   }
 
-  // Save (main action)
+  // Swap (main action) - directly send to Comfy-Swap server
   modal.querySelector("#cs-save").addEventListener("click", async () => {
     const payload = validate();
     if (!payload) return;
+    
+    const url = (localStorage.getItem("comfy_swap_url") || "http://localhost:8189").trim();
+    
     try {
-      const r = await fetch("/comfyswap/pending", {
+      let r = await fetch(`${url}/api/workflows`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      
+      if (r.status === 409) {
+        r = await fetch(`${url}/api/workflows/${encodeURIComponent(payload.id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+      
       if (!r.ok) throw new Error(await r.text());
-      showToast(`"${state.name}" saved!`, "success");
+      showToast(`"${state.name}" swapped to Comfy-Swap!`, "success");
       overlay.remove();
     } catch (e) {
-      alert(`Save failed: ${e.message}`);
+      alert(`Swap failed: ${e.message}\n\nMake sure Comfy-Swap server is running at: ${url}`);
     }
   });
 
@@ -1192,20 +1205,20 @@ async function openMappingPanel(promptObj, initialMapping) {
     }
   });
 
-  // Copy JSON
+  // Export JSON (copy)
   modal.querySelector("#cs-copy").addEventListener("click", async () => {
     const payload = validate();
     if (!payload) return;
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-      showToast("JSON copied!", "success");
+      showToast("Exported to clipboard!", "success");
       morePanel.classList.remove("show");
     } catch (e) {
-      alert(`Copy failed: ${e.message}`);
+      alert(`Export failed: ${e.message}`);
     }
   });
 
-  // Download
+  // Export File (download)
   modal.querySelector("#cs-download").addEventListener("click", () => {
     const payload = validate();
     if (!payload) return;
@@ -1215,7 +1228,7 @@ async function openMappingPanel(promptObj, initialMapping) {
     a.download = `${payload.id}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
-    showToast(`Downloaded ${payload.id}.json`, "success");
+    showToast(`Exported ${payload.id}.json`, "success");
     morePanel.classList.remove("show");
   });
 }
