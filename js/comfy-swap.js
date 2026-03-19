@@ -18,7 +18,6 @@ function generateWorkflowName(promptObj) {
   let mainModel = "";
   let sampler = "";
   let resolution = "";
-  let hasText2Img = false;
   let hasImg2Img = false;
   let hasControlNet = false;
   let hasUpscale = false;
@@ -43,14 +42,12 @@ function generateWorkflowName(promptObj) {
     if (classType.includes("controlnet")) hasControlNet = true;
     if (classType.includes("upscale")) hasUpscale = true;
     if (classType.includes("inpaint")) hasInpaint = true;
-    if (classType.includes("ksampler") && !hasImg2Img) hasText2Img = true;
   }
   
   if (mainModel) parts.push(mainModel);
   
   const tags = [];
   if (hasImg2Img) tags.push("i2i");
-  else if (hasText2Img) tags.push("t2i");
   if (hasControlNet) tags.push("cn");
   if (hasUpscale) tags.push("up");
   if (hasInpaint) tags.push("inp");
@@ -106,12 +103,35 @@ function mergeCandidates(candidates) {
         name: c.name,
         type: c.type,
         default: c.default ?? "",
+        description: getParamDescription(c.name, c.type),
         targets: [],
       });
     }
     map.get(key).targets.push({ node_id: c.node_id, field: c.field });
   }
   return Array.from(map.values());
+}
+
+function slugify(str) {
+  return str
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "workflow";
+}
+
+async function fetchExistingWorkflows() {
+  const url = localStorage.getItem("comfy_swap_url") || "http://localhost:8189";
+  try {
+    const r = await fetch(`${url}/api/workflows`, { method: "GET" });
+    if (!r.ok) return [];
+    const list = await r.json();
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    console.warn("[ComfySwap] Failed to fetch workflows:", e);
+    return [];
+  }
 }
 
 function createEl(tag, attrs = {}, text = "") {
@@ -133,242 +153,239 @@ const modalStyle = `
   .cs-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.75);
+    background: rgba(0, 0, 0, 0.45);
     z-index: 99999;
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    backdrop-filter: blur(4px);
   }
   .cs-modal {
-    width: min(780px, 95vw);
+    width: min(840px, 95vw);
     max-height: 90vh;
     overflow: auto;
-    background: #ffffff;
-    border-radius: 16px;
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
+    background: #1a1a1a;
+    border-radius: 6px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+    border: 1px solid #333;
+    color: #e0e0e0;
   }
   .cs-header {
-    padding: 20px 24px;
-    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-    border-radius: 16px 16px 0 0;
+    padding: 16px 20px;
+    background: #252525;
+    border-bottom: 1px solid #333;
   }
   .cs-header h3 {
     margin: 0 0 4px 0;
-    font-size: 20px;
-    font-weight: 700;
-    color: #ffffff;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
   }
-  .cs-header h3 svg { opacity: 0.9; }
+  .cs-header h3 svg { opacity: 0.7; }
   .cs-header-desc {
-    font-size: 13px;
-    color: rgba(255,255,255,0.85);
+    font-size: 12px;
+    color: #888;
     margin: 0;
   }
   .cs-body {
-    padding: 20px 24px;
+    padding: 16px 20px;
   }
   .cs-form-row {
-    margin-bottom: 16px;
+    margin-bottom: 14px;
   }
   .cs-form-row label {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-bottom: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #475569;
+    font-size: 12px;
+    font-weight: 500;
+    color: #aaa;
   }
   .cs-form-row label .cs-label-hint {
     font-weight: 400;
-    color: #94a3b8;
+    color: #666;
     font-size: 11px;
   }
   .cs-form-row input {
     width: 100%;
-    padding: 10px 12px;
-    border: 2px solid #e2e8f0;
-    border-radius: 8px;
-    font-size: 14px;
-    color: #1e293b;
-    background: #ffffff;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    padding: 8px 10px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #fff;
+    background: #2a2a2a;
+    transition: border-color 0.2s;
   }
   .cs-form-row input:focus {
     outline: none;
-    border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    border-color: #0af;
   }
   .cs-name-preview {
     margin-top: 6px;
     font-size: 11px;
-    color: #64748b;
+    color: #666;
   }
   .cs-name-preview code {
-    background: #f1f5f9;
+    background: #333;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: 3px;
     font-family: monospace;
-    color: #6366f1;
+    color: #0af;
   }
   .cs-section-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
   }
   .cs-section-title {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #475569;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #aaa;
   }
-  .cs-section-title svg { color: #6366f1; }
+  .cs-section-title svg { color: #888; }
   .cs-param-count {
     font-size: 11px;
-    color: #94a3b8;
-    background: #f1f5f9;
+    color: #666;
+    background: #333;
     padding: 2px 8px;
-    border-radius: 10px;
+    border-radius: 3px;
   }
   .cs-info-box {
-    background: linear-gradient(135deg, #eef2ff 0%, #faf5ff 100%);
-    border: 1px solid #c7d2fe;
-    border-radius: 8px;
-    padding: 12px 14px;
-    margin-bottom: 16px;
-    font-size: 12px;
-    color: #4338ca;
+    background: #252525;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 11px;
+    color: #888;
     display: flex;
     align-items: flex-start;
-    gap: 10px;
+    gap: 8px;
   }
-  .cs-info-box svg { flex-shrink: 0; margin-top: 1px; }
+  .cs-info-box svg { flex-shrink: 0; margin-top: 1px; color: #666; }
   .cs-info-box p { margin: 0; line-height: 1.5; }
   .cs-table-container {
-    border: 2px solid #e2e8f0;
-    border-radius: 10px;
+    border: 1px solid #333;
+    border-radius: 4px;
     overflow: hidden;
-    margin-bottom: 16px;
+    margin-bottom: 14px;
   }
   .cs-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 13px;
+    font-size: 12px;
   }
   .cs-table th {
-    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-    padding: 10px 12px;
+    background: #252525;
+    padding: 8px 10px;
     text-align: left;
-    font-weight: 600;
-    color: #475569;
-    border-bottom: 2px solid #e2e8f0;
+    font-weight: 500;
+    color: #888;
+    border-bottom: 1px solid #333;
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.3px;
   }
   .cs-table td {
-    padding: 10px 12px;
-    border-bottom: 1px solid #f1f5f9;
-    color: #334155;
+    padding: 8px 10px;
+    border-bottom: 1px solid #2a2a2a;
+    color: #ccc;
     vertical-align: middle;
   }
   .cs-table tr:last-child td { border-bottom: none; }
-  .cs-table tr:hover { background: #fafbfc; }
-  .cs-table tr.cs-row-disabled { opacity: 0.5; }
+  .cs-table tr:hover { background: #222; }
+  .cs-table tr.cs-row-disabled { opacity: 0.4; }
   .cs-table input[type="text"] {
     width: 100%;
-    padding: 6px 8px;
-    border: 1px solid #e2e8f0;
-    border-radius: 4px;
+    padding: 5px 7px;
+    border: 1px solid #444;
+    border-radius: 3px;
     font-size: 12px;
-    transition: border-color 0.2s;
+    background: #2a2a2a;
+    color: #fff;
   }
   .cs-table input[type="text"]:focus {
     outline: none;
-    border-color: #6366f1;
-    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+    border-color: #0af;
   }
   .cs-table input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    accent-color: #6366f1;
+    width: 14px;
+    height: 14px;
+    accent-color: #0af;
     cursor: pointer;
   }
   .cs-type {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .cs-type.integer { background: #dbeafe; color: #1d4ed8; }
-  .cs-type.float { background: #fef3c7; color: #b45309; }
-  .cs-type.string { background: #d1fae5; color: #047857; }
-  .cs-type.image { background: #fce7f3; color: #be185d; }
-  .cs-type-icon { font-size: 10px; }
-  .cs-node { 
-    font-size: 11px; 
-    color: #64748b; 
-    font-family: monospace;
-    background: #f8fafc;
     padding: 2px 6px;
     border-radius: 3px;
+    font-size: 10px;
+    font-weight: 500;
   }
-  .cs-empty { text-align: center; padding: 30px; color: #94a3b8; font-size: 13px; }
+  .cs-type.integer { background: #1e3a5f; color: #5cb3ff; }
+  .cs-type.float { background: #3d3012; color: #f5b642; }
+  .cs-type.string { background: #1a3d2e; color: #4ade80; }
+  .cs-type.image { background: #3d1f3d; color: #f472b6; }
+  .cs-type-icon { font-size: 9px; }
+  .cs-node { 
+    font-size: 10px; 
+    color: #666; 
+    font-family: monospace;
+    background: #2a2a2a;
+    padding: 2px 5px;
+    border-radius: 2px;
+  }
+  .cs-empty { text-align: center; padding: 24px; color: #666; font-size: 12px; }
   .cs-actions {
     display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
+    gap: 6px;
+    margin-bottom: 10px;
   }
   .cs-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
+    gap: 5px;
+    padding: 6px 12px;
     border: none;
-    border-radius: 6px;
-    font-size: 13px;
+    border-radius: 4px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s;
   }
   .cs-btn-sm {
-    padding: 5px 10px;
+    padding: 4px 8px;
     font-size: 11px;
   }
   .cs-btn-outline {
-    background: #fff;
-    color: #475569;
-    border: 1px solid #e2e8f0;
+    background: #2a2a2a;
+    color: #ccc;
+    border: 1px solid #444;
   }
   .cs-btn-outline:hover { 
-    background: #f8fafc; 
-    border-color: #cbd5e1;
+    background: #333;
+    border-color: #555;
   }
   .cs-btn-primary {
-    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-    color: white;
-    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
+    background: #0af;
+    color: #000;
   }
   .cs-btn-primary:hover { 
-    box-shadow: 0 4px 8px rgba(99, 102, 241, 0.4);
-    transform: translateY(-1px);
+    background: #0cf;
   }
   .cs-footer {
-    padding: 16px 24px;
-    background: #f8fafc;
-    border-top: 1px solid #e2e8f0;
-    border-radius: 0 0 16px 16px;
+    padding: 12px 20px;
+    background: #252525;
+    border-top: 1px solid #333;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -377,22 +394,22 @@ const modalStyle = `
     position: fixed;
     bottom: 24px;
     right: 24px;
-    padding: 12px 18px;
-    background: #1e293b;
-    color: white;
-    border-radius: 8px;
-    font-size: 14px;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    padding: 10px 16px;
+    background: #333;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 13px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
     z-index: 100000;
-    animation: cs-slideIn 0.3s ease;
+    animation: cs-slideIn 0.2s ease;
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  .cs-toast.success { background: linear-gradient(135deg, #059669 0%, #10b981 100%); }
-  .cs-toast.error { background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); }
+  .cs-toast.success { background: #059669; }
+  .cs-toast.error { background: #dc2626; }
   @keyframes cs-slideIn {
-    from { transform: translateY(20px); opacity: 0; }
+    from { transform: translateY(16px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
   }
   .cs-footer-right {
@@ -402,21 +419,21 @@ const modalStyle = `
   }
   .cs-btn-link {
     background: none;
-    color: #94a3b8;
-    font-size: 12px;
-    padding: 6px 10px;
+    color: #666;
+    font-size: 11px;
+    padding: 4px 8px;
   }
-  .cs-btn-link:hover { color: #64748b; }
+  .cs-btn-link:hover { color: #888; }
   .cs-more-panel {
     display: none;
     position: absolute;
-    bottom: 60px;
-    right: 24px;
-    width: 340px;
-    background: #fff;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    box-shadow: 0 15px 40px rgba(0,0,0,0.18);
+    bottom: 50px;
+    right: 20px;
+    width: 320px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 4px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
     z-index: 10;
   }
   .cs-more-panel.show { display: block; }
@@ -424,32 +441,32 @@ const modalStyle = `
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 14px 16px;
-    border-bottom: 1px solid #e2e8f0;
-    font-size: 13px;
-    font-weight: 600;
-    color: #1e293b;
+    padding: 10px 12px;
+    border-bottom: 1px solid #333;
+    font-size: 12px;
+    font-weight: 500;
+    color: #ccc;
   }
   .cs-more-close {
     background: none;
     border: none;
-    font-size: 18px;
-    color: #94a3b8;
+    font-size: 16px;
+    color: #666;
     cursor: pointer;
     padding: 0 4px;
   }
-  .cs-more-close:hover { color: #64748b; }
-  .cs-more-body { padding: 8px; }
+  .cs-more-close:hover { color: #888; }
+  .cs-more-body { padding: 6px; }
   .cs-more-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 10px;
-    padding: 12px;
-    border-radius: 8px;
-    transition: background 0.2s;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 4px;
+    transition: background 0.15s;
   }
-  .cs-more-item:hover { background: #f8fafc; }
+  .cs-more-item:hover { background: #252525; }
   .cs-more-item-info {
     flex: 1;
     min-width: 0;
@@ -458,46 +475,142 @@ const modalStyle = `
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
-    color: #1e293b;
+    font-size: 12px;
+    color: #ccc;
+    font-weight: 500;
   }
   .cs-more-item-info span {
-    font-size: 11px;
-    color: #94a3b8;
+    font-size: 10px;
+    color: #666;
     margin-top: 2px;
     display: block;
   }
   .cs-more-item-action {
     display: flex;
-    gap: 6px;
+    gap: 5px;
   }
   .cs-more-item-action input {
-    width: 130px;
-    padding: 6px 8px;
-    border: 1px solid #e2e8f0;
-    border-radius: 4px;
+    width: 120px;
+    padding: 5px 7px;
+    border: 1px solid #444;
+    border-radius: 3px;
     font-size: 11px;
+    background: #2a2a2a;
+    color: #fff;
   }
   .cs-stats {
     display: flex;
     gap: 16px;
-    padding: 12px 16px;
-    background: #f8fafc;
-    border-radius: 8px;
-    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: #252525;
+    border-radius: 4px;
+    margin-bottom: 14px;
+    border: 1px solid #333;
   }
   .cs-stat {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
-    color: #64748b;
+    font-size: 11px;
+    color: #888;
   }
   .cs-stat-value {
-    font-weight: 700;
-    color: #1e293b;
+    font-weight: 600;
+    color: #fff;
   }
-  .cs-stat-icon { color: #6366f1; }
+  .cs-stat-icon { color: #666; }
+  .cs-mode-section {
+    margin-bottom: 14px;
+  }
+  .cs-mode-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+  .cs-mode-tab {
+    flex: 1;
+    padding: 8px 12px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #888;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .cs-mode-tab:hover { background: #333; color: #aaa; }
+  .cs-mode-tab.active {
+    background: #0af;
+    border-color: #0af;
+    color: #000;
+  }
+  .cs-mode-panel.hidden { display: none; }
+  .cs-name-preview {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #666;
+  }
+  .cs-name-preview code {
+    background: #333;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+    color: #0af;
+  }
+  .cs-form-row select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #fff;
+    background: #2a2a2a;
+  }
+  .cs-form-row select:focus {
+    outline: none;
+    border-color: #0af;
+  }
+  .cs-metadata {
+    margin-bottom: 14px;
+  }
+  .cs-metadata-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    background: #252525;
+    border: 1px solid #333;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    color: #888;
+    width: 100%;
+    text-align: left;
+  }
+  .cs-metadata-toggle:hover { background: #2a2a2a; }
+  .cs-metadata-toggle svg { transition: transform 0.2s; }
+  .cs-metadata-toggle.open svg { transform: rotate(90deg); }
+  .cs-metadata-content {
+    display: none;
+    margin-top: 8px;
+    padding: 10px;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    max-height: 300px;
+    overflow: auto;
+  }
+  .cs-metadata-content.show { display: block; }
+  .cs-metadata-content pre {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.4;
+    color: #aaa;
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-family: 'Consolas', 'Monaco', monospace;
+  }
 `;
 
 // ============================================================
@@ -570,7 +683,7 @@ function getParamDescription(name, type) {
 
 function renderRows(state) {
   if (state.mapping.length === 0) {
-    return `<tr><td colspan="5" class="cs-empty">
+    return `<tr><td colspan="6" class="cs-empty">
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:8px;opacity:0.5;">
         <circle cx="12" cy="12" r="10"/>
         <line x1="12" y1="8" x2="12" y2="12"/>
@@ -582,26 +695,29 @@ function renderRows(state) {
   }
   return state.mapping.map((p, i) => {
     const nodeIds = (p.targets || []).map(t => t.node_id).join(", ");
-    const desc = getParamDescription(p.name, p.type);
     const rowClass = p.selected === false ? "cs-row-disabled" : "";
+    const descValue = p.description || "";
     return `
     <tr class="${rowClass}">
-      <td style="width:32px;text-align:center;">
+      <td style="width:28px;text-align:center;">
         <input type="checkbox" data-k="sel" data-i="${i}" ${p.selected !== false ? "checked" : ""} title="Select to include in API"/>
       </td>
-      <td style="width:130px;">
-        <input type="text" data-k="name" data-i="${i}" value="${p.name}" placeholder="Parameter name"/>
+      <td style="width:100px;">
+        <input type="text" data-k="name" data-i="${i}" value="${p.name}" placeholder="name"/>
       </td>
-      <td style="width:70px;">
+      <td style="width:60px;">
         <span class="cs-type ${p.type}">
           <span class="cs-type-icon">${getTypeIcon(p.type)}</span>
           ${p.type}
         </span>
       </td>
-      <td style="width:180px;">
-        <input type="text" data-k="default" data-i="${i}" value="${String(p.default ?? "")}" placeholder="Default value" title="${desc || 'Set default value'}"/>
+      <td style="width:120px;">
+        <input type="text" data-k="default" data-i="${i}" value="${String(p.default ?? "")}" placeholder="default"/>
       </td>
-      <td style="width:90px;">
+      <td style="width:140px;">
+        <input type="text" data-k="desc" data-i="${i}" value="${descValue}" placeholder="description"/>
+      </td>
+      <td style="width:70px;">
         <span class="cs-node" title="Mapped ComfyUI node">Node ${nodeIds}</span>
       </td>
     </tr>`;
@@ -609,8 +725,8 @@ function renderRows(state) {
 }
 
 function buildPayload(state, promptObj) {
-  const id = slugify(state.name);
   const selectedParams = state.mapping.filter(m => m.selected !== false);
+  const id = state.mode === "update" ? state.existingId : slugify(state.name);
   return {
     id,
     name: state.name,
@@ -619,12 +735,13 @@ function buildPayload(state, promptObj) {
       name: m.name,
       type: m.type,
       default: m.default,
+      description: m.description || "",
       targets: m.targets,
     })),
   };
 }
 
-function openMappingPanel(promptObj, initialMapping) {
+async function openMappingPanel(promptObj, initialMapping) {
   if (!document.getElementById("cs-style")) {
     const style = document.createElement("style");
     style.id = "cs-style";
@@ -632,9 +749,13 @@ function openMappingPanel(promptObj, initialMapping) {
     document.head.appendChild(style);
   }
 
+  const existingWorkflows = await fetchExistingWorkflows();
   const autoName = generateWorkflowName(promptObj);
+  
   const state = {
+    mode: "create",
     name: autoName,
+    existingId: "",
     mapping: initialMapping.map(m => ({ ...m, selected: true })),
   };
 
@@ -672,26 +793,34 @@ function openMappingPanel(promptObj, initialMapping) {
         </div>
       </div>
       
-      <div class="cs-form-row">
-        <label>
-          Workflow Name
-          <span class="cs-label-hint">Identifier for API calls</span>
-        </label>
-        <input id="cs-name" value="${state.name}" placeholder="e.g. flux-portrait-1024" />
-        <div class="cs-name-preview">API ID: <code id="cs-id-preview">${slugify(state.name)}</code></div>
-      </div>
-      
-      <div class="cs-info-box">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="12" y1="16" x2="12" y2="12"/>
-          <line x1="12" y1="8" x2="12.01" y2="8"/>
-        </svg>
-        <p>
-          <strong>Parameter Mapping:</strong> Checked parameters will be exposed as API inputs.
-          Same-name parameters are auto-merged; changing one value syncs to all linked nodes.
-          Click "Merge Selected" to manually merge multiple parameters.
-        </p>
+      <div class="cs-mode-section">
+        <div class="cs-mode-tabs">
+          <button class="cs-mode-tab active" data-mode="create">Create New</button>
+          <button class="cs-mode-tab" data-mode="update">Update Existing</button>
+        </div>
+        
+        <div class="cs-mode-panel" id="cs-mode-create">
+          <div class="cs-form-row">
+            <label>Workflow Name</label>
+            <input id="cs-name" value="${state.name}" placeholder="e.g. portrait-flux-1024" />
+            <div class="cs-name-preview">API ID: <code id="cs-id-preview">${slugify(state.name)}</code></div>
+          </div>
+        </div>
+        
+        <div class="cs-mode-panel hidden" id="cs-mode-update">
+          <div class="cs-form-row">
+            <label>Select Workflow to Update</label>
+            <select id="cs-existing-select">
+              ${existingWorkflows.length === 0 
+                ? '<option value="">No workflows found on server</option>'
+                : existingWorkflows.map(w => `<option value="${w.id}">${w.name} (${w.id})</option>`).join('')}
+            </select>
+          </div>
+          <div class="cs-form-row">
+            <label>New Name <span class="cs-label-hint">(optional, leave empty to keep current)</span></label>
+            <input id="cs-update-name" value="" placeholder="Leave empty to keep existing name" />
+          </div>
+        </div>
       </div>
       
       <div class="cs-section-header">
@@ -735,17 +864,30 @@ function openMappingPanel(promptObj, initialMapping) {
         <table class="cs-table">
           <thead>
             <tr>
-              <th style="width:32px;text-align:center;">
+              <th style="width:28px;text-align:center;">
                 <input type="checkbox" id="cs-select-all" checked title="Select/Deselect All"/>
               </th>
               <th>Name</th>
               <th>Type</th>
               <th>Default</th>
+              <th>Description</th>
               <th>Source</th>
             </tr>
           </thead>
           <tbody id="cs-body"></tbody>
         </table>
+      </div>
+      
+      <div class="cs-metadata">
+        <button class="cs-metadata-toggle" id="cs-metadata-toggle">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+          View Raw Workflow JSON (for debugging)
+        </button>
+        <div class="cs-metadata-content" id="cs-metadata-content">
+          <pre id="cs-metadata-json"></pre>
+        </div>
       </div>
     </div>
     <div class="cs-footer">
@@ -824,10 +966,15 @@ function openMappingPanel(promptObj, initialMapping) {
   document.body.appendChild(overlay);
 
   const body = modal.querySelector("#cs-body");
-  const idPreview = modal.querySelector("#cs-id-preview");
   const selectedCount = modal.querySelector("#cs-selected-count");
   const selectAllCheckbox = modal.querySelector("#cs-select-all");
   const nameInput = modal.querySelector("#cs-name");
+  const idPreview = modal.querySelector("#cs-id-preview");
+  const existingSelect = modal.querySelector("#cs-existing-select");
+  const updateNameInput = modal.querySelector("#cs-update-name");
+  const modeTabs = modal.querySelectorAll(".cs-mode-tab");
+  const modeCreatePanel = modal.querySelector("#cs-mode-create");
+  const modeUpdatePanel = modal.querySelector("#cs-mode-update");
   
   const updateSelectedCount = () => {
     const count = state.mapping.filter(m => m.selected !== false).length;
@@ -840,9 +987,40 @@ function openMappingPanel(promptObj, initialMapping) {
   };
   refresh();
 
+  modeTabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      modeTabs.forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      state.mode = tab.dataset.mode;
+      
+      if (state.mode === "create") {
+        modeCreatePanel.classList.remove("hidden");
+        modeUpdatePanel.classList.add("hidden");
+      } else {
+        modeCreatePanel.classList.add("hidden");
+        modeUpdatePanel.classList.remove("hidden");
+        if (existingSelect.value && !state.existingId) {
+          state.existingId = existingSelect.value;
+        }
+      }
+    });
+  });
+
   nameInput.addEventListener("input", () => {
     state.name = nameInput.value.trim();
-    idPreview.textContent = slugify(state.name) || "workflow";
+    idPreview.textContent = slugify(state.name);
+  });
+
+  existingSelect.addEventListener("change", () => {
+    state.existingId = existingSelect.value;
+    const selected = existingWorkflows.find(w => w.id === existingSelect.value);
+    if (selected && !updateNameInput.value) {
+      updateNameInput.placeholder = `Current: ${selected.name}`;
+    }
+  });
+
+  updateNameInput.addEventListener("input", () => {
+    state.name = updateNameInput.value.trim();
   });
 
   selectAllCheckbox.addEventListener("change", () => {
@@ -853,6 +1031,16 @@ function openMappingPanel(promptObj, initialMapping) {
 
   overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
   modal.querySelector("#cs-cancel").addEventListener("click", () => overlay.remove());
+
+  const metadataToggle = modal.querySelector("#cs-metadata-toggle");
+  const metadataContent = modal.querySelector("#cs-metadata-content");
+  const metadataJson = modal.querySelector("#cs-metadata-json");
+  metadataJson.textContent = JSON.stringify(promptObj, null, 2);
+  
+  metadataToggle.addEventListener("click", () => {
+    metadataToggle.classList.toggle("open");
+    metadataContent.classList.toggle("show");
+  });
 
   body.addEventListener("click", e => {
     const btn = e.target;
@@ -879,6 +1067,7 @@ function openMappingPanel(promptObj, initialMapping) {
     if (!item) return;
     if (input.dataset.k === "name") item.name = input.value.trim();
     if (input.dataset.k === "default") item.default = input.value;
+    if (input.dataset.k === "desc") item.description = input.value;
   });
 
   body.addEventListener("change", e => {
@@ -928,8 +1117,25 @@ function openMappingPanel(promptObj, initialMapping) {
 
   // Validate helper
   function validate() {
-    state.name = modal.querySelector("#cs-name").value.trim();
-    if (!state.name) { alert("Please enter a workflow name."); return null; }
+    if (state.mode === "create") {
+      state.name = modal.querySelector("#cs-name").value.trim();
+      if (!state.name) { alert("Please enter a workflow name."); return null; }
+      const newId = slugify(state.name);
+      const conflict = existingWorkflows.find(w => w.id === newId);
+      if (conflict) {
+        alert(`A workflow with ID "${newId}" already exists.\nUse "Update Existing" to modify it, or choose a different name.`);
+        return null;
+      }
+    } else {
+      state.existingId = modal.querySelector("#cs-existing-select").value;
+      if (!state.existingId) { alert("Please select a workflow to update."); return null; }
+      const newName = modal.querySelector("#cs-update-name").value.trim();
+      if (newName) state.name = newName;
+      else {
+        const existing = existingWorkflows.find(w => w.id === state.existingId);
+        state.name = existing?.name || state.existingId;
+      }
+    }
     const selected = state.mapping.filter(m => m.selected !== false);
     if (!selected.length) { alert("Please select at least one parameter."); return null; }
     return buildPayload(state, promptObj);
