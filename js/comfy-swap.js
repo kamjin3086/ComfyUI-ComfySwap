@@ -1135,7 +1135,7 @@ async function openMappingPanel(promptObj, initialMapping) {
     return buildPayload(state, promptObj);
   }
 
-  // Swap (main action) - directly send to Comfy-Swap server
+  // Swap (main action) - directly send to Comfy-Swap server (idempotent)
   modal.querySelector("#cs-save").addEventListener("click", async () => {
     const payload = validate();
     if (!payload) return;
@@ -1143,25 +1143,41 @@ async function openMappingPanel(promptObj, initialMapping) {
     const url = (localStorage.getItem("comfy_swap_url") || "http://localhost:8189").trim();
     
     try {
-      let r = await fetch(`${url}/api/workflows`, {
-        method: "POST",
+      // Try PUT first (update or create) - more idempotent
+      let r = await fetch(`${url}/api/workflows/${encodeURIComponent(payload.id)}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       
-      if (r.status === 409) {
-        r = await fetch(`${url}/api/workflows/${encodeURIComponent(payload.id)}`, {
-          method: "PUT",
+      // If 404 (not found), try POST to create
+      if (r.status === 404) {
+        r = await fetch(`${url}/api/workflows`, {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
       }
       
-      if (!r.ok) throw new Error(await r.text());
-      showToast(`"${state.name}" swapped to Comfy-Swap!`, "success");
+      if (!r.ok) {
+        const errText = await r.text();
+        let errMsg = errText;
+        try {
+          const errJson = JSON.parse(errText);
+          errMsg = errJson.error || errJson.message || errText;
+        } catch (_) {}
+        throw new Error(errMsg);
+      }
+      
+      const isUpdate = r.status === 200;
+      showToast(`"${state.name}" ${isUpdate ? "updated" : "created"}!`, "success");
       overlay.remove();
     } catch (e) {
-      alert(`Swap failed: ${e.message}\n\nMake sure Comfy-Swap server is running at: ${url}`);
+      if (e.message.includes("fetch") || e.message.includes("network") || e.message.includes("Failed")) {
+        alert(`Cannot connect to Comfy-Swap server.\n\nMake sure it's running at: ${url}`);
+      } else {
+        alert(`Swap failed: ${e.message}`);
+      }
     }
   });
 
