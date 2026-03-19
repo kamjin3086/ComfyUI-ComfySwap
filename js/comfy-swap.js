@@ -9,8 +9,10 @@ console.log("[ComfySwap] Plugin loading...");
 function slugify(value) {
   return String(value || "")
     .toLowerCase()
+    .trim()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "workflow";
 }
 
 function generateWorkflowName(promptObj) {
@@ -110,15 +112,6 @@ function mergeCandidates(candidates) {
     map.get(key).targets.push({ node_id: c.node_id, field: c.field });
   }
   return Array.from(map.values());
-}
-
-function slugify(str) {
-  return str
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64) || "workflow";
 }
 
 async function fetchExistingWorkflows() {
