@@ -15,12 +15,56 @@ import { ensureStyles, showToast, renderRows, createConnectionStatusHTML, icons 
 import { getConnectionManager } from './connection-manager.js';
 
 /**
+ * Fetch existing workflows from both pending queue and connected Comfy-Swap instances
+ * @returns {Promise<Array>}
+ */
+async function fetchExistingWorkflows() {
+  const workflows = new Map();
+  
+  // 1. Get pending workflows (not yet synced)
+  try {
+    const cm = getConnectionManager();
+    const pending = await cm.getPendingWorkflows();
+    for (const wf of (pending || [])) {
+      if (wf.id) {
+        workflows.set(wf.id, { ...wf, source: "pending" });
+      }
+    }
+  } catch (e) {
+    console.warn("[ComfySwap] Failed to fetch pending workflows:", e);
+  }
+  
+  // 2. Try to get synced workflows from the first connected Comfy-Swap instance
+  // This uses the stored URL from localStorage (legacy support)
+  const swapUrl = localStorage.getItem("comfy_swap_url") || "http://localhost:8189";
+  try {
+    const response = await fetch(`${swapUrl}/api/workflows`, {
+      method: "GET",
+      signal: AbortSignal.timeout(3000)
+    });
+    if (response.ok) {
+      const synced = await response.json();
+      for (const wf of (synced || [])) {
+        if (wf.id && !workflows.has(wf.id)) {
+          workflows.set(wf.id, { ...wf, source: "synced" });
+        }
+      }
+    }
+  } catch (e) {
+    // Comfy-Swap server might not be reachable, that's okay
+    console.debug("[ComfySwap] Could not fetch synced workflows:", e.message);
+  }
+  
+  return Array.from(workflows.values());
+}
+
+/**
  * Generate the modal HTML template
  * @param {Object} options 
  * @returns {string}
  */
 function generateModalHTML(options) {
-  const { state, nodeCount, paramCount } = options;
+  const { state, nodeCount, paramCount, existingWorkflows } = options;
   
   return `
     <div class="cs-header">
@@ -50,10 +94,36 @@ function generateModalHTML(options) {
       </div>
       
       <div class="cs-mode-section">
-        <div class="cs-form-row">
-          <label>Workflow Name</label>
-          <input id="cs-name" value="${state.name}" placeholder="e.g. portrait-flux-1024" />
-          <div class="cs-name-preview">API ID: <code id="cs-id-preview">${slugify(state.name)}</code></div>
+        <div class="cs-mode-tabs">
+          <button class="cs-mode-tab active" data-mode="create">Create New</button>
+          <button class="cs-mode-tab" data-mode="update">Update Existing</button>
+        </div>
+        
+        <div class="cs-mode-panel" id="cs-mode-create">
+          <div class="cs-form-row">
+            <label>Workflow Name</label>
+            <input id="cs-name" value="${state.name}" placeholder="e.g. portrait-flux-1024" />
+            <div class="cs-name-preview">API ID: <code id="cs-id-preview">${slugify(state.name)}</code></div>
+          </div>
+        </div>
+        
+        <div class="cs-mode-panel hidden" id="cs-mode-update">
+          <div class="cs-form-row">
+            <label>Select Workflow to Update</label>
+            <select id="cs-existing-select">
+              ${existingWorkflows.length === 0 
+                ? '<option value="">No workflows found</option>'
+                : existingWorkflows.map(w => {
+                    const label = w.name || w.id;
+                    const badge = w.source === "pending" ? " [pending]" : "";
+                    return `<option value="${w.id}">${label}${badge}</option>`;
+                  }).join('')}
+            </select>
+          </div>
+          <div class="cs-form-row">
+            <label>New Name <span class="cs-label-hint">(optional, leave empty to keep current)</span></label>
+            <input id="cs-update-name" value="" placeholder="Leave empty to keep existing name" />
+          </div>
         </div>
       </div>
       
@@ -153,8 +223,9 @@ function generateModalHTML(options) {
  * @param {HTMLElement} overlay 
  * @param {Object} state 
  * @param {Object} promptObj 
+ * @param {Array} existingWorkflows
  */
-function setupEventHandlers(modal, overlay, state, promptObj) {
+function setupEventHandlers(modal, overlay, state, promptObj, existingWorkflows) {
   const cm = getConnectionManager();
   
   const body = modal.querySelector("#cs-body");
@@ -162,6 +233,11 @@ function setupEventHandlers(modal, overlay, state, promptObj) {
   const selectAllCheckbox = modal.querySelector("#cs-select-all");
   const nameInput = modal.querySelector("#cs-name");
   const idPreview = modal.querySelector("#cs-id-preview");
+  const existingSelect = modal.querySelector("#cs-existing-select");
+  const updateNameInput = modal.querySelector("#cs-update-name");
+  const modeTabs = modal.querySelectorAll(".cs-mode-tab");
+  const modeCreatePanel = modal.querySelector("#cs-mode-create");
+  const modeUpdatePanel = modal.querySelector("#cs-mode-update");
   
   const updateSelectedCount = () => {
     const count = state.mapping.filter(m => m.selected !== false).length;
@@ -174,10 +250,44 @@ function setupEventHandlers(modal, overlay, state, promptObj) {
   };
   refresh();
 
+  // Mode tab switching
+  modeTabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      modeTabs.forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      state.mode = tab.dataset.mode;
+      
+      if (state.mode === "create") {
+        modeCreatePanel.classList.remove("hidden");
+        modeUpdatePanel.classList.add("hidden");
+      } else {
+        modeCreatePanel.classList.add("hidden");
+        modeUpdatePanel.classList.remove("hidden");
+        if (existingSelect.value && !state.existingId) {
+          state.existingId = existingSelect.value;
+        }
+      }
+    });
+  });
+
   // Name input
   nameInput.addEventListener("input", () => {
     state.name = nameInput.value.trim();
     idPreview.textContent = slugify(state.name);
+  });
+
+  // Existing workflow select
+  existingSelect.addEventListener("change", () => {
+    state.existingId = existingSelect.value;
+    const selected = existingWorkflows.find(w => w.id === existingSelect.value);
+    if (selected && !updateNameInput.value) {
+      updateNameInput.placeholder = `Current: ${selected.name || selected.id}`;
+    }
+  });
+
+  // Update name input
+  updateNameInput.addEventListener("input", () => {
+    state.name = updateNameInput.value.trim();
   });
 
   // Select all checkbox
@@ -282,10 +392,26 @@ function setupEventHandlers(modal, overlay, state, promptObj) {
 
   // Validate helper
   function validate() {
-    state.name = modal.querySelector("#cs-name").value.trim();
-    if (!state.name) { 
-      alert("Please enter a workflow name."); 
-      return null; 
+    if (state.mode === "create") {
+      state.name = modal.querySelector("#cs-name").value.trim();
+      if (!state.name) { 
+        alert("Please enter a workflow name."); 
+        return null; 
+      }
+    } else {
+      // Update mode
+      state.existingId = modal.querySelector("#cs-existing-select").value;
+      if (!state.existingId) { 
+        alert("Please select a workflow to update."); 
+        return null; 
+      }
+      const newName = modal.querySelector("#cs-update-name").value.trim();
+      if (newName) {
+        state.name = newName;
+      } else {
+        const existing = existingWorkflows.find(w => w.id === state.existingId);
+        state.name = existing?.name || state.existingId;
+      }
     }
     
     const selected = state.mapping.filter(m => m.selected !== false);
@@ -305,12 +431,13 @@ function setupEventHandlers(modal, overlay, state, promptObj) {
     try {
       await cm.addPendingWorkflow(payload);
       
-      // Show appropriate toast based on connection status
+      // Show appropriate toast based on connection status and mode
+      const action = state.mode === "create" ? "created" : "updated";
       if (cm.hasActiveInstance()) {
         const count = cm.getActiveCount();
         const msg = count === 1 
-          ? `"${state.name}" synced!` 
-          : `"${state.name}" synced to ${count} instances!`;
+          ? `"${state.name}" ${action}!` 
+          : `"${state.name}" ${action} (${count} instances)`;
         showToast(msg, "success");
       } else {
         showToast(`"${state.name}" queued (waiting for connection)`, "warning");
@@ -408,6 +535,7 @@ function refreshConnectionStatus(modal) {
 export async function openMappingPanel(promptObj, initialMapping) {
   ensureStyles();
 
+  const existingWorkflows = await fetchExistingWorkflows();
   const autoName = generateWorkflowName(promptObj);
   
   const state = {
@@ -423,12 +551,12 @@ export async function openMappingPanel(promptObj, initialMapping) {
   const overlay = createEl("div", { class: "cs-overlay" });
   const modal = createEl("div", { class: "cs-modal" });
   
-  modal.innerHTML = generateModalHTML({ state, nodeCount, paramCount });
+  modal.innerHTML = generateModalHTML({ state, nodeCount, paramCount, existingWorkflows });
   
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 
-  setupEventHandlers(modal, overlay, state, promptObj);
+  setupEventHandlers(modal, overlay, state, promptObj, existingWorkflows);
 }
 
 /**
