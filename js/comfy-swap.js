@@ -10,7 +10,7 @@ function slugify(value) {
   return String(value || "")
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/[^a-z0-9_]+/g, "-")  // 保留下划线
     .replace(/^-+|-+$/g, "")
     .slice(0, 64) || "workflow";
 }
