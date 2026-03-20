@@ -1135,7 +1135,7 @@ async function openMappingPanel(promptObj, initialMapping) {
     return buildPayload(state, promptObj);
   }
 
-  // Swap (main action) - directly send to Comfy-Swap server (idempotent)
+  // Swap (main action) - directly send to Comfy-Swap server
   modal.querySelector("#cs-save").addEventListener("click", async () => {
     const payload = validate();
     if (!payload) return;
@@ -1143,17 +1143,18 @@ async function openMappingPanel(promptObj, initialMapping) {
     const url = (localStorage.getItem("comfy_swap_url") || "http://localhost:8189").trim();
     
     try {
-      // Try PUT first (update or create) - more idempotent
-      let r = await fetch(`${url}/api/workflows/${encodeURIComponent(payload.id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      
-      // If 404 (not found), try POST to create
-      if (r.status === 404) {
+      let r;
+      if (state.mode === "create") {
+        // Create mode: POST directly
         r = await fetch(`${url}/api/workflows`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        // Update mode: PUT to existing workflow
+        r = await fetch(`${url}/api/workflows/${encodeURIComponent(payload.id)}`, {
+          method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
@@ -1169,8 +1170,8 @@ async function openMappingPanel(promptObj, initialMapping) {
         throw new Error(errMsg);
       }
       
-      const isUpdate = r.status === 200;
-      showToast(`"${state.name}" ${isUpdate ? "updated" : "created"}!`, "success");
+      const action = state.mode === "create" ? "created" : "updated";
+      showToast(`"${state.name}" ${action}!`, "success");
       overlay.remove();
     } catch (e) {
       if (e.message.includes("fetch") || e.message.includes("network") || e.message.includes("Failed")) {
