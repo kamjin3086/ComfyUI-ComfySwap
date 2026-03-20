@@ -15,47 +15,25 @@ import { ensureStyles, showToast, renderRows, createConnectionStatusHTML, icons 
 import { getConnectionManager } from './connection-manager.js';
 
 /**
- * Fetch existing workflows from both pending queue and connected Comfy-Swap instances
+ * Fetch existing workflows from local plugin backend.
+ * The backend aggregates pending workflows and synced workflows 
+ * (pushed by Comfy-Swap instances during polling).
  * @returns {Promise<Array>}
  */
 async function fetchExistingWorkflows() {
-  const workflows = new Map();
-  
-  // 1. Get pending workflows (not yet synced)
   try {
-    const cm = getConnectionManager();
-    const pending = await cm.getPendingWorkflows();
-    for (const wf of (pending || [])) {
-      if (wf.id) {
-        workflows.set(wf.id, { ...wf, source: "pending" });
-      }
-    }
-  } catch (e) {
-    console.warn("[ComfySwap] Failed to fetch pending workflows:", e);
-  }
-  
-  // 2. Try to get synced workflows from the first connected Comfy-Swap instance
-  // This uses the stored URL from localStorage (legacy support)
-  const swapUrl = localStorage.getItem("comfy_swap_url") || "http://localhost:8189";
-  try {
-    const response = await fetch(`${swapUrl}/api/workflows`, {
+    const response = await fetch("/comfyswap/workflows", {
       method: "GET",
       signal: AbortSignal.timeout(3000)
     });
     if (response.ok) {
-      const synced = await response.json();
-      for (const wf of (synced || [])) {
-        if (wf.id && !workflows.has(wf.id)) {
-          workflows.set(wf.id, { ...wf, source: "synced" });
-        }
-      }
+      const data = await response.json();
+      return data.workflows || [];
     }
   } catch (e) {
-    // Comfy-Swap server might not be reachable, that's okay
-    console.debug("[ComfySwap] Could not fetch synced workflows:", e.message);
+    console.warn("[ComfySwap] Failed to fetch workflows:", e);
   }
-  
-  return Array.from(workflows.values());
+  return [];
 }
 
 /**

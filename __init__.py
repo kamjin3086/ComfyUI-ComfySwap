@@ -10,7 +10,7 @@ import hashlib
 import server
 from aiohttp import web
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 WEB_DIRECTORY = "./js"
 NODE_CLASS_MAPPINGS = {}
@@ -18,6 +18,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 
 # Pending workflows queue (in-memory storage for workflows awaiting sync)
 pending_workflows = []
+
+# Synced workflows cache (pushed by Comfy-Swap instances during polling)
+# Key: instance_id, Value: {workflows: [{id, name}, ...], last_updated: timestamp}
+synced_workflows_cache = {}
 
 # Connected Comfy-Swap instances tracker
 # Key: instance_id (hash), Value: {instance_num, last_seen, user_agent, first_seen}
@@ -44,8 +48,8 @@ def _get_instance_id(request):
     return hashlib.md5(raw.encode()).hexdigest()[:12]
 
 
-def _track_instance(request):
-    """Track a Comfy-Swap instance connection."""
+def _track_instance(request, workflows=None):
+    """Track a Comfy-Swap instance connection and optionally cache its workflows."""
     global instance_counter
     
     instance_id = _get_instance_id(request)
@@ -63,6 +67,13 @@ def _track_instance(request):
     else:
         connected_instances[instance_id]["last_seen"] = now
         connected_instances[instance_id]["request_count"] += 1
+    
+    # Cache workflows if provided
+    if workflows is not None:
+        synced_workflows_cache[instance_id] = {
+            "workflows": workflows,
+            "last_updated": now
+        }
     
     return instance_id
 
@@ -104,13 +115,9 @@ def _get_active_instances():
 # API Routes
 # ============================================================
 
-@server.PromptServer.instance.routes.get("/comfyswap/status")
-async def get_status(request):
-    """Get plugin status and version information.
-    This endpoint is polled by Comfy-Swap clients to check plugin status.
-    """
-    # Track this as an active instance (Comfy-Swap client polling)
-    _track_instance(request)
+async def _handle_status_request(request, workflows=None):
+    """Common handler for status requests (GET and POST)."""
+    _track_instance(request, workflows)
     
     instances = _get_active_instances()
     return web.json_response({
@@ -122,11 +129,72 @@ async def get_status(request):
     })
 
 
+@server.PromptServer.instance.routes.get("/comfyswap/status")
+async def get_status(request):
+    """Get plugin status and version information.
+    This endpoint is polled by Comfy-Swap clients to check plugin status.
+    """
+    return await _handle_status_request(request)
+
+
+@server.PromptServer.instance.routes.post("/comfyswap/status")
+async def post_status(request):
+    """Get plugin status while pushing workflow list from Comfy-Swap instance.
+    Comfy-Swap clients use POST to push their workflow list during polling.
+    """
+    workflows = None
+    try:
+        data = await request.json()
+        workflows = data.get("workflows", [])
+    except:
+        pass
+    return await _handle_status_request(request, workflows)
+
+
 @server.PromptServer.instance.routes.get("/comfyswap/instances")
 async def get_instances(request):
     """Get list of connected Comfy-Swap instances."""
     return web.json_response({
         "instances": _get_active_instances()
+    })
+
+
+@server.PromptServer.instance.routes.get("/comfyswap/workflows")
+async def get_synced_workflows(request):
+    """Get merged list of workflows from all connected Comfy-Swap instances.
+    Returns workflows that have been synced to connected instances (pushed during polling).
+    Also includes pending workflows that haven't been synced yet.
+    """
+    now = time.time()
+    workflows = {}
+    
+    # First add pending workflows (not yet synced)
+    for wf in pending_workflows:
+        wf_id = wf.get("id")
+        if wf_id:
+            workflows[wf_id] = {
+                "id": wf_id,
+                "name": wf.get("name", wf_id),
+                "source": "pending"
+            }
+    
+    # Then add synced workflows from active instances (won't override pending)
+    for instance_id, cache in synced_workflows_cache.items():
+        # Skip stale instance caches
+        if now - cache.get("last_updated", 0) > INSTANCE_TIMEOUT * 2:
+            continue
+        
+        for wf in cache.get("workflows", []):
+            wf_id = wf.get("id")
+            if wf_id and wf_id not in workflows:
+                workflows[wf_id] = {
+                    "id": wf_id,
+                    "name": wf.get("name", wf_id),
+                    "source": "synced"
+                }
+    
+    return web.json_response({
+        "workflows": list(workflows.values())
     })
 
 
