@@ -106,7 +106,12 @@ def _get_active_instances():
 
 @server.PromptServer.instance.routes.get("/comfyswap/status")
 async def get_status(request):
-    """Get plugin status and version information."""
+    """Get plugin status and version information.
+    This endpoint is polled by Comfy-Swap clients to check plugin status.
+    """
+    # Track this as an active instance (Comfy-Swap client polling)
+    _track_instance(request)
+    
     instances = _get_active_instances()
     return web.json_response({
         "installed": True,
