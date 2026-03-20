@@ -1,6 +1,6 @@
 # ComfyUI-ComfySwap
 
-A ComfyUI extension that enables seamless workflow swap to [Comfy-Swap](https://github.com/your-repo/comfy-swap), making your workflows callable via REST API and CLI.
+A ComfyUI extension that enables seamless workflow swap to [Comfy-Swap](https://github.com/kamjin3086/comfy-swap), making your workflows callable via REST API and CLI.
 
 ## Features
 
@@ -15,7 +15,7 @@ A ComfyUI extension that enables seamless workflow swap to [Comfy-Swap](https://
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/your-repo/ComfyUI-ComfySwap.git
+git clone https://github.com/kamjin3086/ComfyUI-ComfySwap.git
 ```
 
 ### Method 2: Download ZIP
@@ -84,5 +84,5 @@ MIT License
 
 ## Links
 
-- [Comfy-Swap](https://github.com/your-repo/comfy-swap) - Main application
+- [Comfy-Swap](https://github.com/kamjin3086/comfy-swap) - Main application
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) - The AI image generation platform
