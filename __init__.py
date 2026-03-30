@@ -11,7 +11,7 @@ import threading
 import server
 from aiohttp import web
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 WEB_DIRECTORY = "./js"
 NODE_CLASS_MAPPINGS = {}
