@@ -7,6 +7,7 @@ allowing you to create API endpoints from your ComfyUI workflows.
 
 import time
 import hashlib
+import threading
 import server
 from aiohttp import web
 
@@ -30,6 +31,10 @@ instance_counter = 0
 
 # Instance timeout in seconds (consider disconnected if no request for this long)
 INSTANCE_TIMEOUT = 60
+CLEANUP_INTERVAL = 10
+WORKFLOW_CACHE_TIMEOUT = INSTANCE_TIMEOUT * 2
+_state_lock = threading.Lock()
+_cleanup_thread_started = False
 
 
 def _get_instance_id(request):
@@ -54,57 +59,75 @@ def _track_instance(request, workflows=None):
     
     instance_id = _get_instance_id(request)
     now = time.time()
-    
-    if instance_id not in connected_instances:
-        instance_counter += 1
-        connected_instances[instance_id] = {
-            "instance_num": instance_counter,
-            "first_seen": now,
-            "last_seen": now,
-            "user_agent": request.headers.get("User-Agent", "Unknown"),
-            "request_count": 1
-        }
-    else:
-        connected_instances[instance_id]["last_seen"] = now
-        connected_instances[instance_id]["request_count"] += 1
-    
-    # Cache workflows if provided
-    if workflows is not None:
-        synced_workflows_cache[instance_id] = {
-            "workflows": workflows,
-            "last_updated": now
-        }
+
+    with _state_lock:
+        if instance_id not in connected_instances:
+            instance_counter += 1
+            connected_instances[instance_id] = {
+                "instance_num": instance_counter,
+                "first_seen": now,
+                "last_seen": now,
+                "user_agent": request.headers.get("User-Agent", "Unknown"),
+                "request_count": 1
+            }
+        else:
+            connected_instances[instance_id]["last_seen"] = now
+            connected_instances[instance_id]["request_count"] += 1
+
+        # Cache workflows if provided
+        if workflows is not None:
+            synced_workflows_cache[instance_id] = {
+                "workflows": workflows,
+                "last_updated": now
+            }
     
     return instance_id
+
+
+def _cleanup_stale_instances_locked(now):
+    """Remove stale instances and stale workflow cache entries (lock must be held)."""
+    stale_instances = [
+        inst_id for inst_id, info in connected_instances.items()
+        if now - info["last_seen"] > INSTANCE_TIMEOUT
+    ]
+    for inst_id in stale_instances:
+        del connected_instances[inst_id]
+        synced_workflows_cache.pop(inst_id, None)
+
+    stale_caches = [
+        inst_id for inst_id, cache in synced_workflows_cache.items()
+        if now - cache.get("last_updated", 0) > WORKFLOW_CACHE_TIMEOUT
+    ]
+    for inst_id in stale_caches:
+        synced_workflows_cache.pop(inst_id, None)
 
 
 def _cleanup_stale_instances():
     """Remove instances that haven't been seen recently."""
     now = time.time()
-    stale = [k for k, v in connected_instances.items() 
-             if now - v["last_seen"] > INSTANCE_TIMEOUT]
-    for k in stale:
-        del connected_instances[k]
+    with _state_lock:
+        _cleanup_stale_instances_locked(now)
 
 
 def _get_active_instances():
     """Get list of active instances, sorted by instance number."""
-    _cleanup_stale_instances()
     now = time.time()
-    
-    instances = []
-    for inst_id, info in connected_instances.items():
-        age = now - info["last_seen"]
-        instances.append({
-            "id": inst_id,
-            "instance_num": info["instance_num"],
-            "name": f"Instance {info['instance_num']}",
-            "connected": age < INSTANCE_TIMEOUT,
-            "last_seen": info["last_seen"],
-            "last_seen_ago": int(age),
-            "request_count": info["request_count"],
-            "first_seen": info["first_seen"]
-        })
+
+    with _state_lock:
+        _cleanup_stale_instances_locked(now)
+        instances = []
+        for inst_id, info in connected_instances.items():
+            age = now - info["last_seen"]
+            instances.append({
+                "id": inst_id,
+                "instance_num": info["instance_num"],
+                "name": f"Instance {info['instance_num']}",
+                "connected": age < INSTANCE_TIMEOUT,
+                "last_seen": info["last_seen"],
+                "last_seen_ago": int(age),
+                "request_count": info["request_count"],
+                "first_seen": info["first_seen"]
+            })
     
     # Sort by instance number
     instances.sort(key=lambda x: x["instance_num"])
@@ -178,10 +201,13 @@ async def get_synced_workflows(request):
                 "source": "pending"
             }
     
+    with _state_lock:
+        cache_snapshot = dict(synced_workflows_cache)
+
     # Then add synced workflows from active instances (won't override pending)
-    for instance_id, cache in synced_workflows_cache.items():
+    for instance_id, cache in cache_snapshot.items():
         # Skip stale instance caches
-        if now - cache.get("last_updated", 0) > INSTANCE_TIMEOUT * 2:
+        if now - cache.get("last_updated", 0) > WORKFLOW_CACHE_TIMEOUT:
             continue
         
         for wf in cache.get("workflows", []):
@@ -255,13 +281,33 @@ async def clear_pending(request):
 async def heartbeat(request):
     """Heartbeat endpoint for Comfy-Swap instances to maintain connection."""
     instance_id = _track_instance(request)
-    info = connected_instances.get(instance_id, {})
+    with _state_lock:
+        info = connected_instances.get(instance_id, {}).copy()
     
     return web.json_response({
         "status": "ok",
         "instance_num": info.get("instance_num", 0),
         "name": f"Instance {info.get('instance_num', 0)}"
     })
+
+
+def _start_cleanup_worker():
+    """Start a background worker to prune stale instances periodically."""
+    global _cleanup_thread_started
+    if _cleanup_thread_started:
+        return
+    _cleanup_thread_started = True
+
+    def _worker():
+        while True:
+            time.sleep(CLEANUP_INTERVAL)
+            _cleanup_stale_instances()
+
+    t = threading.Thread(target=_worker, daemon=True, name="comfyswap-cleanup")
+    t.start()
+
+
+_start_cleanup_worker()
 
 
 __all__ = ["WEB_DIRECTORY", "NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
